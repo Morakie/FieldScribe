@@ -698,8 +698,20 @@ function registerIpc(win) {
           })
           for (const ph of en.photos) { if (ph.placeholder) continue; if (!fs.existsSync(path.join(tmp, ph.file))) await fsp.copyFile(path.join(src, ph.file), path.join(tmp, ph.file)); photos++ }
         }
+        // previousSelections.txt = the rows ticked in HomeGauge's Select Sections (0 = General, 1… = sections in order)
+        let selected = null
+        try {
+          const txt = (await fsp.readFile(path.join(src, 'previousSelections.txt'), 'utf8')).trim()
+          if (txt) selected = new Set(txt.split(/[,\s]+/).filter(Boolean).map(Number))
+        } catch {}
+        // (only when the file kept every section; otherwise HomeGauge already left the unticked ones out)
+        if (selected && r.sections.length >= Math.max(...selected)) {
+          r.sections = r.sections.filter((_, i) => selected.has(i + 1))
+          if (!selected.has(0)) r.generalInfo = { html: '', materials: [] }
+        }
         const st = await fsp.stat(p)
         const fill = {
+          selected: [...(!selected || selected.has(0) ? ['General'] : []), ...r.sections.map((x) => x.name)],
           version: 2, name, date: st.mtime.toISOString(), template: r.template.name, from: '', source: p,
           report: { sections: r.sections, generalInfo: r.generalInfo, template: r.template },
           counts: fillCounts(r), missingPhotos: missing,

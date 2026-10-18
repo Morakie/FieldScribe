@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { FillInfo } from '../types'
 import { api } from '../util'
-import { applyFillTo, fillFromReport, previewFill, FILL_MODES, type FillMode } from '../fills'
+import { applyFillTo, fillFromReport, fillPhotos, previewFill, FILL_MODES, type FillMode } from '../fills'
+import { itemHasContent, sectionHasContent } from '../merge'
 import { useEditor } from './Editor'
 import Modal from './Modal'
 
@@ -21,6 +22,17 @@ export function FillsModal({ mode, onClose, flush }: { mode: 'apply' | 'save'; o
   const [hgOpen, setHgOpen] = useState(false)
   const [name, setName] = useState('')
   const [withPhotos, setWithPhotos] = useState(true)
+  // Save: which sections go into the fill ("General" = General Info). Default: everything that has answers.
+  const hasGeneral = !!r.generalInfo.html.replace(/<[^>]+>/g, '').trim() || r.generalInfo.materials.some((m) => m.selected.length)
+  const [saveSel, setSaveSel] = useState<Record<string, boolean>>(() => ({ General: hasGeneral, ...Object.fromEntries(r.sections.map((x) => [x.id, sectionHasContent(x)])) }))
+  // Apply: which of the fill's sections to use (all by default)
+  const [pickSecs, setPickSecs] = useState(false)
+  const [applySel, setApplySel] = useState<Record<string, boolean>>({})
+  const fillSecs = useMemo(() => (fill?.version === 2 ? (fill.report.sections as any[]).map((x) => ({ id: x.id as string, name: x.name as string, n: x.instances.reduce((k: number, i: any) => k + i.items.filter(itemHasContent).length, 0) })) : []), [fill])
+  const fillHasGeneral = fill?.version === 2 && (fill.report.generalInfo?.html || fill.report.generalInfo?.materials?.some((m: any) => m.selected?.length))
+  useEffect(() => { setApplySel({}) }, [sel])
+  const only = pickSecs ? new Set(fillSecs.filter((x) => applySel[x.id] !== false).map((x) => x.id)) : undefined
+  const useGeneral = !pickSecs || applySel.General !== false
 
   const load = async (pick?: string) => {
     const l = await api.listFills(); setList(l)
@@ -28,18 +40,28 @@ export function FillsModal({ mode, onClose, flush }: { mode: 'apply' | 'save'; o
     else setSel((s) => (s && l.some((x) => x.name === s) ? s : mode === 'apply' ? (l.find((x) => tplKey(x.template) === tplKey(r.template.name))?.name ?? l[0]?.name ?? null) : null))
   }
   useEffect(() => { load() }, [])
-  useEffect(() => { setFill(null); if (sel && mode === 'apply') api.loadFill(sel).then(setFill).catch(() => setFill(null)) }, [sel])
+  const [dryMap, setDryMap] = useState<Record<string, string> | undefined>()
+  useEffect(() => {
+    setFill(null); setDryMap(undefined)
+    if (!sel || mode !== 'apply') return
+    api.loadFill(sel).then(async (f) => {
+      setFill(f)
+      // find the fill's photos that are already in this report, so the preview doesn't count them as new
+      const photos = fillPhotos(r, sel, f)
+      if (photos.length) setDryMap((await api.mergeFiles('fill:' + sel, r.id, photos, [], true)).map)
+    }).catch(() => setFill(null))
+  }, [sel])
   useEffect(() => { try { localStorage.setItem('fillMode', how) } catch {} }, [how])
 
   const sorted = useMemo(() => (list ? [...list].sort((a, b) => (desc ? -1 : 1) * a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })) : []), [list, desc])
   const info = list?.find((x) => x.name === sel) || null
-  const plan = useMemo(() => (sel && fill ? previewFill(r, sel, fill, how) : null), [sel, fill, how, r])
+  const plan = useMemo(() => (sel && fill ? previewFill(r, sel, fill, how, only, useGeneral, dryMap) : null), [sel, fill, how, r, pickSecs, applySel, dryMap])
   const otherTemplate = info && info.template && tplKey(info.template) !== tplKey(r.template.name)
 
   async function apply(which = sel) {
     if (!which) return
     setBusy('Applying…')
-    try { setDone(await applyFillTo(r, which, how, flush, mutate)) } catch (e: any) { alert('Could not apply the fill — this report was not changed.\n\n' + (e?.message || e)) }
+    try { setDone(await applyFillTo(r, which, how, flush, mutate, which === sel ? only : undefined, which === sel ? useGeneral : true)) } catch (e: any) { alert('Could not apply the fill — this report was not changed.\n\n' + (e?.message || e)) }
     setBusy('')
   }
   async function save() {
@@ -49,7 +71,9 @@ export function FillsModal({ mode, onClose, flush }: { mode: 'apply' | 'save'; o
     setBusy('Saving…')
     try {
       await flush()
-      const data = fillFromReport(r, withPhotos)
+      const pick = new Set(r.sections.filter((x) => saveSel[x.id]).map((x) => x.id))
+      if (!pick.size && !saveSel.General) { setBusy(''); return alert('Select at least one section to save.') }
+      const data = fillFromReport(r, withPhotos, pick, !!saveSel.General)
       const saved = await api.saveFill(n, r.id, data)
       setDone(`Saved report fill "${saved}": ${data.counts.items} item(s), ${data.counts.comments} comment(s), ${withPhotos ? data.photos.length : 0} photo(s), ${data.counts.materials} S&M list(s).`)
     } catch (e: any) { alert('Could not save the fill.\n\n' + (e?.message || e)) }
@@ -79,7 +103,7 @@ export function FillsModal({ mode, onClose, flush }: { mode: 'apply' | 'save'; o
       <div className="fill-rows">
         {sorted.map((f) => (
           <div key={f.name} className={'fill-row' + (f.name === sel ? ' sel' : '')}
-            onClick={() => { setSel(f.name); if (mode === 'save') setName(f.name) }}
+            onClick={() => { setSel(f.name); if (mode === 'save') { setName(f.name); api.loadFill(f.name).then((x) => { if (Array.isArray(x?.selected)) { const names = new Set(x.selected as string[]); setSaveSel({ General: names.has('General'), ...Object.fromEntries(r.sections.map((sc) => [sc.id, names.has(sc.name)])) }) } }).catch(() => {}) } }}
             onDoubleClick={() => { setSel(f.name); if (mode === 'apply') apply(f.name) }}>
             {f.name}{f.version === 1 && <span className="muted small"> (old format)</span>}
           </div>
@@ -89,21 +113,39 @@ export function FillsModal({ mode, onClose, flush }: { mode: 'apply' | 'save'; o
     </div>
   )
 
-  if (mode === 'save') return (
-    <Modal title="Save New Report Fill" onClose={onClose}
-      footer={<>
-        <span className="grow" />
-        <button className="primary" disabled={!name.trim() || !!busy} onClick={save}>{busy || 'OK'}</button>
-        <button onClick={onClose}>Cancel</button>
-      </>}>
-      <label className="field"><span>Report fill name</span>
-        <input autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && save()} placeholder="e.g. New Construction" /></label>
-      <div className="muted small">Saves this report's ratings, comments, Styles &amp; Materials, General Info{withPhotos ? ' and photos' : ''}. Customer, agent, price and appointment info are never saved in a fill. Click an existing fill to save over it.</div>
-      {listBox}
-      <label className="row"><input type="checkbox" checked={withPhotos} onChange={(e) => setWithPhotos(e.target.checked)} /> Include photos</label>
-      <div className="fill-info">Using Template: {r.template.name}</div>
-    </Modal>
-  )
+  if (mode === 'save') {
+    const rows = [{ id: 'General', name: 'General', n: hasGeneral ? 1 : 0 }, ...r.sections.map((x) => ({ id: x.id, name: x.name, n: x.instances.reduce((k, i) => k + i.items.filter(itemHasContent).length, 0) }))]
+    const all = (v: boolean) => setSaveSel(Object.fromEntries(rows.map((x) => [x.id, v])))
+    return (
+      <Modal title="Select Sections" onClose={onClose}
+        footer={<>
+          <span className="grow" />
+          <button className="primary" disabled={!name.trim() || !!busy} onClick={save}>{busy || 'OK'}</button>
+          <button onClick={onClose}>Cancel</button>
+        </>}>
+        <label className="row fill-name"><span>Name</span>
+          <input autoFocus className="grow" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && save()} list="fill-names" placeholder="e.g. New Construction" />
+          <datalist id="fill-names">{(list || []).map((f) => <option key={f.name} value={f.name} />)}</datalist>
+        </label>
+        <div className="row"><span className="grow">Select Sections To Save and have Report Filled In Later</span>
+          <button onClick={() => all(true)}>Select All</button><button onClick={() => all(false)}>Unselect All</button></div>
+        <div className="fill-secs">
+          <div className="fill-secs-head"><span>Select</span><span>Section Name</span></div>
+          <div className="fill-rows">
+            {rows.map((x) => (
+              <label key={x.id} className={'fill-sec' + (saveSel[x.id] ? ' on' : '')}>
+                <span className="cell"><input type="checkbox" checked={!!saveSel[x.id]} onChange={(e) => setSaveSel({ ...saveSel, [x.id]: e.target.checked })} /></span>
+                <span className="grow">{x.name}</span>
+                <span className="muted small">{x.id === 'General' ? (x.n ? 'filled in' : 'empty') : x.n ? `${x.n} answered` : 'empty'}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+        <label className="row"><input type="checkbox" checked={withPhotos} onChange={(e) => setWithPhotos(e.target.checked)} /> Include photos and photo labels</label>
+        <div className="muted small">Saves the ticked sections' ratings, comments, Styles &amp; Materials{withPhotos ? ', photos and photo labels' : ''}. Customer, agent and price are never saved. Using Template: {r.template.name}. Type an existing name to save over it.</div>
+      </Modal>
+    )
+  }
 
   return (
     <>
@@ -123,9 +165,20 @@ export function FillsModal({ mode, onClose, flush }: { mode: 'apply' | 'save'; o
             <div>Using Template: {info.template ? `${info.template}.ht5`.replace(/\.ht5\.ht5$/i, '.ht5') : '(unknown)'}</div>
             {info.counts && <div className="muted">Contains {info.counts.items} answered items, {info.counts.comments} comments, {info.counts.photos} photos, {info.counts.materials} S&amp;M lists</div>}
             {otherTemplate && <div className="warn-text">This report uses “{r.template.name}”. Sections and items are matched by name; anything that doesn't match is added as new.</div>}
-            {plan && <div className="muted">Will change: {plan.sections.reduce((n, s) => n + s.totals.items, 0)} items, {plan.sections.reduce((n, s) => n + s.totals.comments, 0)} new comments, {plan.sections.reduce((n, s) => n + s.totals.materials, 0) + plan.generalInfo.materials} S&amp;M lists{plan.sections.some((s) => s.match == null) ? `, ${plan.sections.filter((s) => s.match == null).length} new sections` : ''}</div>}
+            {plan && (() => { const inc = plan.sections.filter((s) => s.included); return <div className="muted">Will change: {inc.reduce((n, s) => n + s.totals.items, 0)} items, {inc.reduce((n, s) => n + s.totals.comments, 0)} new comments, {inc.reduce((n, s) => n + s.totals.photos, 0)} photos, {inc.reduce((n, s) => n + s.totals.materials, 0) + plan.generalInfo.materials} S&amp;M lists{inc.some((s) => s.match == null) ? `, ${inc.filter((s) => s.match == null).length} new sections` : ''}</div> })()}
           </> : <span className="muted">Pick a fill to see what's in it.</span>}
         </div>
+        {fill?.version === 2 && <div className="fill-pick">
+          <label className="row"><input type="checkbox" checked={pickSecs} onChange={(e) => setPickSecs(e.target.checked)} /> Choose which sections to fill</label>
+          {pickSecs && <div className="fill-rows fill-pick-list">
+            {[...(fillHasGeneral ? [{ id: 'General', name: 'General', n: 1 }] : []), ...fillSecs].map((x) => (
+              <label key={x.id} className="fill-sec">
+                <span className="cell"><input type="checkbox" checked={applySel[x.id] !== false} onChange={(e) => setApplySel({ ...applySel, [x.id]: e.target.checked })} /></span>
+                <span className="grow">{x.name}</span>{x.id !== 'General' && <span className="muted small">{x.n} answered</span>}
+              </label>
+            ))}
+          </div>}
+        </div>}
         <div className="fill-modes">
           {FILL_MODES.map(([k, label, hint]) => (
             <label key={k} title={hint}><input type="radio" name="fillmode" checked={how === k} onChange={() => setHow(k)} /> {label}</label>

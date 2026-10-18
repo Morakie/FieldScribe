@@ -21,8 +21,12 @@ export const FILL_MODES: [FillMode, string, string][] = [
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x))
 
 /** Build the data saved for a fill from a report. Customer, agent, price and appointment are never saved. */
-export function fillFromReport(r: Report, withPhotos: boolean) {
-  const sections = clone(r.sections)
+/**
+ * `pick` = the section ids to save (HomeGauge's "Select Sections To Save"); `general` = save General Info too.
+ * Leave `pick` out to save every section.
+ */
+export function fillFromReport(r: Report, withPhotos: boolean, pick?: Set<string>, general = true) {
+  const sections = clone(r.sections.filter((s) => !pick || pick.has(s.id)))
   const photos = new Set<string>()
   let items = 0, comments = 0, photoN = 0, materials = 0
   for (const s of sections) for (const inst of s.instances) {
@@ -39,49 +43,58 @@ export function fillFromReport(r: Report, withPhotos: boolean) {
     template: r.template.name,
     from: r.reportNumber || r.inspection.address || '',
     counts: { sections: sections.length, items, comments, photos: photoN, materials },
-    report: { sections, generalInfo: clone(r.generalInfo), template: r.template, coverPhoto, coverLabel: r.coverLabel },
+    report: { sections, generalInfo: general ? clone(r.generalInfo) : { html: '', materials: [] }, template: r.template, coverPhoto, coverLabel: r.coverLabel },
+    selected: [...(general ? ['General'] : []), ...sections.map((s) => s.name)],
     photos: [...photos],
   }
 }
 
 /** A v2 fill as a report-shaped object the merge engine can read. */
-function fillAsReport(name: string, f: any): Report {
+export function fillAsReport(name: string, f: any, general = true): Report {
   return {
     format: 'bridge-report/v1', id: 'fill:' + name, created: f.date || '', updated: f.date || '', reportNumber: name,
     inspection: { date: '', start: '', end: '', address: '', city: '', state: '', zip: '', inspector: '', company: '', license: '', notes: '' },
     clients: [], people: [], services: [], attachments: [],
-    generalInfo: f.report.generalInfo || { html: '', materials: [] },
+    generalInfo: general && f.report.generalInfo ? f.report.generalInfo : { html: '', materials: [] },
     template: f.report.template, sections: f.report.sections || [], photoFolder: '',
     coverPhoto: f.report.coverPhoto, coverLabel: f.report.coverLabel,
   } as Report
 }
 
-export function fillOptions(src: Report, mode: FillMode): MergeOptions {
+/** `only` = the fill's section ids to apply (all when left out); `general` = apply its General Info. */
+export function fillOptions(src: Report, mode: FillMode, only?: Set<string>, general = true): MergeOptions {
   const sections: Record<string, boolean> = {}
-  for (const s of src.sections) sections[s.id] = true
-  return { sections, materials: true, generalInfo: mode === 'replace' ? 'replace' : 'keep', customer: false, services: false, inspection: false, cover: true, attachments: false, mode }
+  for (const s of src.sections) sections[s.id] = !only || only.has(s.id)
+  return { sections, materials: true, generalInfo: mode === 'replace' && general ? 'replace' : 'keep', customer: false, services: false, inspection: false, cover: true, attachments: false, mode }
+}
+
+/** Photo files a fill would bring in (for a dry run that finds the ones already in the report). */
+export function fillPhotos(r: Report, name: string, f: any): string[] {
+  if (f?.version !== 2) return []
+  const src = fillAsReport(name, f)
+  return mergeReports(r, src, fillOptions(src, 'add')).plan.photosToCopy
 }
 
 /** What applying this fill would do (for the info box), without changing anything. */
-export function previewFill(r: Report, name: string, f: any, mode: FillMode): MergePlan | null {
+export function previewFill(r: Report, name: string, f: any, mode: FillMode, only?: Set<string>, general = true, photoMap?: Record<string, string>): MergePlan | null {
   if (f?.version !== 2) return null
-  const src = fillAsReport(name, f)
-  return mergeReports(r, src, fillOptions(src, mode)).plan
+  const src = fillAsReport(name, f, general)
+  return mergeReports(r, src, fillOptions(src, mode, only, general), photoMap).plan
 }
 
 /**
  * Apply a fill to the open report. `flush` saves the report first (the main process backs it up before
  * copying photos), `mutate` changes the open report. Returns a one-line summary.
  */
-export async function applyFillTo(r: Report, name: string, mode: FillMode, flush: () => any, mutate: (fn: (r: Report) => void) => void): Promise<string> {
+export async function applyFillTo(r: Report, name: string, mode: FillMode, flush: () => any, mutate: (fn: (r: Report) => void) => void, only?: Set<string>, general = true): Promise<string> {
   const f = await api.loadFill(name)
   if (f?.version !== 2) {
     let n = 0
     mutate((rr) => { n = applyLegacyFill(rr, f, mode !== 'blanks') })
     return `Applied "${name}" — ${n} item(s) / list(s) filled.`
   }
-  const src = fillAsReport(name, f)
-  const opts = fillOptions(src, mode)
+  const src = fillAsReport(name, f, general)
+  const opts = fillOptions(src, mode, only, general)
   const plan = mergeReports(r, src, opts).plan
   await flush()
   const files = await api.mergeFiles(src.id, r.id, plan.photosToCopy, [], false)
@@ -92,10 +105,11 @@ export async function applyFillTo(r: Report, name: string, mode: FillMode, flush
     for (const k of Object.keys(out.result) as (keyof Report)[]) (cur as any)[k] = out.result[k]
   })
   await flush()
-  const items = res.sections.reduce((n, s) => n + s.totals.items, 0)
-  const comments = res.sections.reduce((n, s) => n + s.totals.comments, 0)
-  const mats = res.sections.reduce((n, s) => n + s.totals.materials, 0) + res.generalInfo.materials
-  const added = res.sections.filter((s) => s.match == null).length
+  const inc = res.sections.filter((s) => s.included)
+  const items = inc.reduce((n, s) => n + s.totals.items, 0)
+  const comments = inc.reduce((n, s) => n + s.totals.comments, 0)
+  const mats = inc.reduce((n, s) => n + s.totals.materials, 0) + res.generalInfo.materials
+  const added = inc.filter((s) => s.match == null).length
   return `Applied "${name}": ${items} item(s), ${comments} comment(s), ${files.copied} photo(s), ${mats} S&M list(s)` +
     (added ? `, ${added} new section(s)` : '') + (files.same ? ` (${files.same} photo(s) were already here)` : '') + '.'
 }

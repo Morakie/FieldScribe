@@ -33,6 +33,8 @@ export interface ItemPlan {
 }
 export interface SectionPlan {
   srcId: string; group: string; name: string
+  /** false when the section was unticked (it is only described, nothing is merged) */
+  included: boolean
   /** name of the matching section in this report, or null when it will be added as a new section */
   match: string | null
   newInstances: string[]
@@ -285,7 +287,7 @@ export function mergeReports(target: Report, source: Report, opts: MergeOptions,
     if (!sectionHasContent(ss)) { plan.emptySections++; continue }
     const ts = T.sections.find((x) => norm(x.name) === norm(ss.name) && norm(x.group) === norm(ss.group))
       || T.sections.find((x) => norm(x.name) === norm(ss.name))
-    const sp: SectionPlan = { srcId: ss.id, group: ss.group, name: ss.name, match: ts ? ts.name : null, newInstances: [], unexclude: false, items: [], materials: [], totals: { items: 0, comments: 0, photos: 0, materials: 0 } }
+    const sp: SectionPlan = { srcId: ss.id, group: ss.group, name: ss.name, included: opts.sections[ss.id] !== false, match: ts ? ts.name : null, newInstances: [], unexclude: false, items: [], materials: [], totals: { items: 0, comments: 0, photos: 0, materials: 0 } }
     const include = opts.sections[ss.id] !== false
     if (include) {
       if (ts) mergeSection(c, ts, ss, opts, sp)
