@@ -5,6 +5,7 @@ import { applyFillTo, fillFromReport, fillPhotos, previewFill, FILL_MODES, type 
 import { itemHasContent, sectionHasContent } from '../merge'
 import { useEditor } from './Editor'
 import Modal from './Modal'
+import AskText from './AskText'
 
 const usDate = (iso: string) => { const d = new Date(iso); return isNaN(+d) ? '' : `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}` }
 const tplKey = (s: string) => String(s || '').split(/[\\/]/).pop()!.replace(/\.ht5$/i, '').toLowerCase().trim()
@@ -83,11 +84,10 @@ export function FillsModal({ mode, onClose, flush }: { mode: 'apply' | 'save'; o
     if (!sel || !confirm(`Delete the report fill "${sel}"? This cannot be undone.`)) return
     await api.deleteFill(sel); setSel(null); load()
   }
-  async function rename() {
-    if (!sel) return
-    const n = prompt('New name for this report fill:', sel)
-    if (!n || n.trim() === sel) return
-    try { load(await api.renameFill(sel, n.trim())) } catch (e: any) { alert(e?.message || String(e)) }
+  const [renaming, setRenaming] = useState(false)
+  async function rename(n: string) {
+    if (!sel || !n || n === sel) return
+    try { load(await api.renameFill(sel, n)) } catch (e: any) { alert(e?.message || String(e)) }
   }
 
   if (done) return (
@@ -158,7 +158,7 @@ export function FillsModal({ mode, onClose, flush }: { mode: 'apply' | 'save'; o
         </>}>
         <div>Select a Report Fill to apply</div>
         {listBox}
-        <div className="row"><span className="grow" /><button disabled={!sel} onClick={rename}>Rename</button><button disabled={!sel} onClick={del}>Delete</button></div>
+        <div className="row"><span className="grow" /><button disabled={!sel} onClick={() => setRenaming(true)}>Rename</button><button disabled={!sel} onClick={del}>Delete</button></div>
         <div className="fill-info">
           {info ? <>
             <div>Date: {usDate(info.date)}</div>
@@ -185,6 +185,7 @@ export function FillsModal({ mode, onClose, flush }: { mode: 'apply' | 'save'; o
           ))}
         </div>
       </Modal>
+      {renaming && sel && <AskText title="Rename Report Fill" label="New name" initial={sel} onOk={rename} onClose={() => setRenaming(false)} />}
       {hgOpen && <HgFillsImport have={list || []} onClose={(n) => { setHgOpen(false); if (n) load(n) }} />}
     </>
   )
