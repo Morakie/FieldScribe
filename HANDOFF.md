@@ -134,6 +134,15 @@ The per-menu parity checklist is in **ROADMAP.md**. This file is the full pictur
 - Tested end to end on copies of real reports (Calico Ridge + a blank 10/17 report + a "second inspector" copy): 1 new comment + 1 photo copied, 40 duplicates skipped; the blank report added only its 2 photos and no sections were wrongly re-included.
 - Possible follow-ups: "Merge into…" from the reports-list gear menu without opening; show which inspector each merged section came from.
 
+### A2. Template folders, Report Fills, photo placeholders — DONE 10/18 (evening, commit 58e3c5f on dev)
+- [x] Start page → Select Report Template: collapsible folders (HG categories; a Bridge template sits in the folder of the HG template it came from, else "My Templates"), search box, HG templates list collapsed under its own toggle with per-folder groups.
+- [x] **Report Fills v2** (`src/fills.ts`, `src/components/FillsModal.tsx`): stored in `BridgeReport Data\Fills\<name>\fill.json` + photos. Apply dialog mimics HG (Report Fill Names list with sort header, Rename/Delete, info box with Date / Using Template / contents / what will change). Applied through the merge engine with three modes: add (default), only fill empty items, replace. A backup is made first. Fills made with another template match by section/item name. Old v1 `Fills\<name>.json` still apply.
+- [x] Save New Report Fill: name + click an existing one to overwrite, include photos option. Never stores customer/agent/price/appointment.
+- [x] Start page: optional **Report Fill** picker, applied when the new report opens.
+- [x] **Import HomeGauge Report Fills** (File menu and the Apply dialog): reads `AppData\Local\HomeGauge\AutoFill\<n>\<name>.hf3` (a report file without customer data — `parseReportXml` reads it) plus the photos in that folder. Tyler has 10: 16 Unit, 1st Floor Condo, 4-Plex, Beta 4.0, Commercial, Frame Walk, Modular, Mold V.1, New Construction, Temp Fill.
+- [x] **Photo placeholders**: HG stores labeled empty slots as `placeholder.jpg` (e.g. "Roof Overview", "Flashing"). Now `Photo.placeholder = true, file = ''`: shown as dashed drop targets with the label, dropped photos fill them (keeping the label), never printed or counted, skipped by Edit All Photos. Old imported reports are converted when opened.
+- Still to do: Find Unanswered option for unfilled placeholders (section D); HG fill dates come from the .hf3 file time.
+
 ### B. Reports list (Open Report screen, HG style) — DONE 10/17
 - [x] Columns: Date, Name1, Address, City, Zip, Report ID, Agent, Published, Paid, Reinspection; sorting; search by column with Match case; details pane + cover photo; multi-select (Ctrl/Shift), arrow keys, Enter, Delete key.
 - [x] Refresh Database (rebuilds every index.json; the list also upgrades old index files on its own).
