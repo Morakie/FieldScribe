@@ -1,6 +1,6 @@
 # Bridge Report — Handoff / Pick-up-tomorrow notes
 
-_Last updated: 2026-10-18 (Merge Report built and deployed — section A; folder/backup recommendation in section 2; HG office reference in H-ref)_
+_Last updated: 2026-10-18 (code moved to GitHub repo Morakie/FieldScribe with dev/main branches; Merge Report — section A; HG office reference in H-ref)_
 
 Bridge Report is Bridge Home Inspections' in-house replacement for HomeGauge (HG). It's an offline desktop report writer now; a cloud office backend comes later.
 The per-menu parity checklist is in **ROADMAP.md**. This file is the full picture: status, how to run it, how it's built, and the to-do list.
@@ -50,36 +50,33 @@ The per-menu parity checklist is in **ROADMAP.md**. This file is the full pictur
 
 ## 2. How to run it (Tyler's PC)
 
-- Double-click **`Documents\BridgeReport\Start Bridge Report.bat`**.
-  - It refreshes PATH, runs `npm install` only when package.json changed, then builds and launches.
+- **Code now lives in `Documents\GitHub\FieldScribe`** (GitHub: `Morakie/FieldScribe`, private). Double-click **`Start Bridge Report.bat`** in that folder.
+  - It refreshes PATH, runs `npm install` only when package.json changed (the first run there takes a few minutes), then builds and launches.
+  - The old `Documents\BridgeReport` folder is the pre-git copy; keep it as a fallback until the new folder is confirmed working, then it can be deleted.
 - From PowerShell, use `npm.cmd run app`. Plain `npm` is blocked by the execution policy.
-- Data lives in **`Documents\BridgeReport Data`**:
+- Data lives in **`Documents\BridgeReport Data`** (unchanged, not in git):
   - `Templates\*.json`
   - `Reports\<id>\`: report.json, `backups\`, photos, `originals\`, `attachments\`
   - `Library\` (Drawings/CYA), `Branding\logo.*`, `Fills\`
   - `settings.json`, `contacts.json`
   - `.thumbs\`, `.deleted\` (deleted reports go here, not to the trash)
-- **Folder location (10/18):** Documents is local only (not OneDrive), so the code and the 2.9 GB of data (244 reports) are not backed up anywhere. Recommended to Tyler: move the code to `Documents\GitHub\BridgeReport` + a private GitHub repo; leave the data folder where it is (the app looks for it there) but back it up (OneDrive or external drive) until the cloud phase. Waiting on Tyler's go-ahead and GitHub account. If the code moves, update the start shortcut and the deploy path in section 3.
+- The data folder (2.9 GB, 244 reports on 10/18) is still not backed up anywhere — needs OneDrive/external backup until the cloud phase.
 
-## 3. How updates get deployed (for Claude)
+## 3. How updates get deployed (for Claude) — git workflow since 10/18
 
-The cloud workspace has the source of truth at `/home/claude/bridgereport`, but **a new cloud session starts with an empty workspace**.
-
-**Pulling the source into a fresh session:** on the PC (device_bash, Documents folder access), `tar --exclude=node_modules --exclude=dist --exclude=report-assets --exclude=.updates -czf .updates/src-pull-<date>.tar.gz .`, stage it with device_stage_files, extract to `/home/claude/bridgereport`, then `npm ci --ignore-scripts` and `node node_modules/electron/install.js`. Empty the tarball afterwards.
-
-1. Build a tarball without node_modules, dist or report-assets:
-   `tar --exclude=node_modules --exclude=dist --exclude=report-assets -czf /mnt/user-data/outputs/updates/update-$TS.tar.gz .`
-2. Copy it to `C:\Users\Tyler\Documents\BridgeReport\.updates\update-$TS.tar.gz` with device_commit_files. Always use a **new unique name**; overwrites don't land reliably.
-3. On the PC (device_bash), extract into a temp folder and `cp -r` over the app:
-   `B="$HOME/mnt/Documents/BridgeReport"; mkdir -p "$HOME/upd" && tar -xzf "$B/.updates/update-$TS.tar.gz" -C "$HOME/upd" && cp -r "$HOME/upd/." "$B/"`
-   Extracting in place fails because deletes aren't allowed in that folder.
-4. Verify with `cmp`, then empty the tarball (`: > file`).
-5. Font files may be locked while the app is open. That's fine because their content is identical.
+- Repo: `https://github.com/Morakie/FieldScribe` (Claude GitHub App has push access). Branches: **`dev`** (every change lands here first) and **`main`** (only what Tyler has tested). Tyler approved Claude pushing/merging to main.
+- **Fresh cloud session:** `add_repo Morakie/FieldScribe` (push), clone it, `npm ci --ignore-scripts && node node_modules/electron/install.js` for testing. Commit as Tyler Perna <Tyler@bridgehomeinspections.com> with the Claude co-author trailer.
+1. Commit on `dev`, push to `origin dev`.
+2. On the PC (device_bash, Documents folder access + delete permission so git can clear its lock files):
+   `cd "$HOME/mnt/Documents/GitHub/FieldScribe" && git fetch -q origin && git checkout -q dev && git merge -q --ff-only origin/dev && git log --oneline -1`
+   The PC VM can reach github.com for fetch (no credentials needed — read only). It cannot push; Tyler can push from GitHub Desktop if ever needed.
+3. Tyler restarts the app with the .bat to pick up changes. After he confirms, fast-forward `main` to `dev` and push.
+4. Don't copy node_modules across the device mount (546 MB of small files times out) — the .bat installs it.
 
 **Testing:** Playwright `_electron` under xvfb-run (`/opt/npm-tools/node_modules/playwright`, pass `executablePath: <app>/node_modules/electron/dist/electron`).
 - Scripts: `/tmp/claude-0/e2e/*.js` (e.g. `merge.js`)
 - Env vars: `BRIDGE_DATA_DIR=<tmp>` and `LOCALAPPDATA=/tmp/claude-0/e2e/fakelocal`
-- Real test reports can be copied read-only from `BridgeReport Data\Reports` the same way (tar → stage).
+- Real test reports can be copied read-only from `BridgeReport Data\Reports` (tar on the PC into a scratch folder → device_stage_files).
 
 ## 4. How it's built
 
@@ -339,13 +336,13 @@ Source: "HomeGauge ONE — Inspector Dashboard" (`homegauge.com/inspector/shgi/i
 3. A higher-res **logo PNG** (1000px+ wide) for crisp PDFs.
 4. Do you use **Radon Tests** or **Forms** in HG? If not, we skip them.
 5. What does the HG **Overlay** feature do for you?
-6. Move code to `Documents\GitHub\BridgeReport` + **private GitHub repo** (recommended 10/18; nothing is backed up today). Which GitHub account? And a backup plan for `BridgeReport Data`.
+6. ~~GitHub repo~~ — done 10/18 (`Morakie/FieldScribe`). Still open: a backup plan for `BridgeReport Data`, and confirm the repo is **Private**.
 7. When ready: a couple of **FLIR IR sample photos**.
 8. Which HG web extras does the office use, and how often: **TRM / CRL**, **HomeGauge Protect**, **BuildFax**, public **ScheduleNow** booking? (Tyler is asking the office.)
 
 ## 7. Suggested order for next session
 1. ~~Reports list upgrade~~, ~~Create Reinspection~~ (10/17), ~~Merge Report~~ (10/18) — done.
-2. Folder move + GitHub repo, once Tyler OKs it.
+2. ~~Folder move + GitHub repo~~ — done 10/18.
 3. **Web view** of the report (section C) — reference material in hand.
 4. Finish check (unanswered options, missing labels, missing text) + spell check options.
 5. The Options screens (General, Autosave, Comments, Text Size, Picture Defaults).
