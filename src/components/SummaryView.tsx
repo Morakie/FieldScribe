@@ -17,7 +17,7 @@ export default function SummaryView() {
             <button className="link danger" onClick={() => mutate(() => { e.summary = false })}>Remove from summary</button>
           </div>
           <div className="sum-text" dangerouslySetInnerHTML={{ __html: e.html }} />
-          <div className="sum-pics">{e.photos.map((p, i) => <img key={i} src={imgUrl(joinPath(dir, p.file))} />)}</div>
+          <div className="sum-pics">{e.photos.filter((p) => !p.placeholder).map((p, i) => <img key={i} src={imgUrl(joinPath(dir, p.file))} />)}</div>
         </div>
       ))}
     </div>

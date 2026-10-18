@@ -13,7 +13,7 @@ export async function importPhoto(reportId: string, srcPath: string): Promise<st
 /** Attach photos to an item; creates an entry if the item has none. */
 export async function attachPhotos(
   r: Report, mutate: (fn: (r: Report) => void) => void,
-  item: ItemAnswer, entryIdx: number, photos: DraggedPhoto[],
+  item: ItemAnswer, entryIdx: number, photos: DraggedPhoto[], slot?: number,
 ) {
   const files: Photo[] = []
   const size = photoSettings().reportSize
@@ -21,7 +21,13 @@ export async function attachPhotos(
   mutate(() => {
     let e: Entry | undefined = item.entries[entryIdx] || item.entries[item.entries.length - 1]
     if (!e) { e = newEntry(); item.entries.push(e) }
-    e.photos.push(...files)
+    // photos fill empty placeholder slots first (the one dropped on, then the next empty ones), keeping the slot's label
+    for (const f of files) {
+      let i = slot != null && e.photos[slot]?.placeholder ? slot : e.photos.findIndex((p) => p.placeholder)
+      slot = undefined
+      if (i >= 0) { e.photos[i] = { ...f, caption: f.caption || e.photos[i].caption }; continue }
+      e.photos.push(f)
+    }
   })
   // open the photo editor on a single newly added photo (Options → Photo Settings can turn this off)
   if (files.length === 1 && prefs.get('autoEditPhoto', '1') === '1') {

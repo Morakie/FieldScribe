@@ -12,6 +12,7 @@ import SummaryView from './SummaryView'
 import PhotoPanel from './PhotoPanel'
 import PreviewModal from './PreviewModal'
 import MergeModal from './MergeModal'
+import { applyFillTo, type FillMode } from '../fills'
 import Split, { resetAllSplits } from './Split'
 import PhotoEditor from './PhotoEditor'
 import { ColumnHeadersModal, CommentsManager, FillsModal, SaveTemplateAsModal, SpellCheckModal } from './EditorTools'
@@ -80,10 +81,17 @@ export default function Editor({ reportId, onClose }: { reportId: string; onClos
     Promise.all([api.loadReport(reportId), api.reportDir(reportId)]).then(([r, d]) => {
       // older imports stored the HomeGauge file path as the template name
       if (/[\\/]/.test(r.template.name)) r.template.name = r.template.name.split(/[\\/]/).pop()!.replace(/\.ht5$/i, '')
+      // reports imported before placeholders were supported point at HomeGauge's "placeholder.jpg"
+      for (const sec of r.sections) for (const inst of sec.instances) for (const it of inst.items) for (const en of it.entries)
+        for (const ph of en.photos) if (/^placeholder\.(jpe?g|png)$/i.test(ph.file || '')) { ph.file = ''; ph.placeholder = true }
       ref.current = r; setDir(d)
       const first = r.sections.find((s) => !s.excluded)
       if (first) setSel({ kind: 'section', sectionId: first.id, instanceId: first.instances[0].id, tab: 'items', itemIdx: 0, entryIdx: 0 })
       setVersion(1)
+      // a report fill picked on the Start page is applied once the new report opens
+      let pending: { name: string; mode: FillMode } | null = null
+      try { pending = JSON.parse(sessionStorage.getItem('pendingFill:' + reportId) || 'null'); sessionStorage.removeItem('pendingFill:' + reportId) } catch {}
+      if (pending) applyFillTo(r, pending.name, pending.mode, () => save.flush(), mutate).then((m) => setTimeout(() => alert(m), 50)).catch((e) => alert('The report fill could not be applied: ' + (e?.message || e)))
     })
     return () => save.flush()
   }, [reportId])
@@ -160,7 +168,7 @@ export default function Editor({ reportId, onClose }: { reportId: string; onClos
   function editAllPhotos(fromCurrent: boolean) {
     const list: { photo: Photo; go: Sel }[] = []
     let startAt = 0
-    r!.sections.filter((s) => !s.excluded).forEach((s) => s.instances.forEach((inst) => inst.items.forEach((it, itemIdx) => it.entries.forEach((e, entryIdx) => e.photos.forEach((p) => {
+    r!.sections.filter((s) => !s.excluded).forEach((s) => s.instances.forEach((inst) => inst.items.forEach((it, itemIdx) => it.entries.forEach((e, entryIdx) => e.photos.filter((p) => !p.placeholder).forEach((p) => {
       if (fromCurrent && sel.kind === 'section' && inst.id === sel.instanceId && itemIdx === sel.itemIdx && !startAt) startAt = list.length || -1
       list.push({ photo: p, go: { kind: 'section', sectionId: s.id, instanceId: inst.id, tab: 'items', itemIdx, entryIdx } })
     })))))
@@ -192,8 +200,8 @@ export default function Editor({ reportId, onClose }: { reportId: string; onClos
     else if (cmd === 'findNextSM') findSM(false)
     else if (cmd === 'findFirstFlag') findItem((it) => !!it.flagged, true, 'flag')
     else if (cmd === 'findNextFlag') findItem((it) => !!it.flagged, false, 'flag')
-    else if (cmd === 'findFirstPhoto') findItem((it) => it.entries.some((e) => e.photos.length > 0), true, 'photo')
-    else if (cmd === 'findNextPhoto') findItem((it) => it.entries.some((e) => e.photos.length > 0), false, 'photo')
+    else if (cmd === 'findFirstPhoto') findItem((it) => it.entries.some((e) => e.photos.some((p) => !p.placeholder)), true, 'photo')
+    else if (cmd === 'findNextPhoto') findItem((it) => it.entries.some((e) => e.photos.some((p) => !p.placeholder)), false, 'photo')
     else if (cmd === 'editPhotosStart') editAllPhotos(false)
     else if (cmd === 'editPhotosCurrent') editAllPhotos(true)
     else if (cmd === 'customer') setSel({ kind: 'customer' })
@@ -311,8 +319,8 @@ export default function Editor({ reportId, onClose }: { reportId: string; onClos
         </div>
         {showStatus && <StatusBar saveState={saveState} />}
         {preview && <PreviewModal onClose={() => setPreview(false)} />}
-        {tool === 'fillApply' && <FillsModal mode="apply" onClose={() => setTool(null)} />}
-        {tool === 'fillSave' && <FillsModal mode="save" onClose={() => setTool(null)} />}
+        {tool === 'fillApply' && <FillsModal mode="apply" flush={() => save.flush()} onClose={() => setTool(null)} />}
+        {tool === 'fillSave' && <FillsModal mode="save" flush={() => save.flush()} onClose={() => setTool(null)} />}
         {tool === 'spell' && <SpellCheckModal onClose={() => setTool(null)} />}
         {tool === 'columns' && <ColumnHeadersModal onClose={() => setTool(null)} />}
         {tool === 'comments' && <CommentsManager onClose={() => setTool(null)} />}
@@ -330,7 +338,7 @@ function StatusBar({ saveState }: { saveState: string }) {
   const { r } = useEditor()
   const items = r.sections.filter((s) => !s.excluded).flatMap((s) => s.instances.flatMap((i) => i.items.filter((it) => !it.excluded)))
   const done = items.filter((it) => it.ratings.length).length
-  const photos = items.reduce((n, it) => n + it.entries.reduce((m, e) => m + e.photos.length, 0), 0)
+  const photos = items.reduce((n, it) => n + it.entries.reduce((m, e) => m + e.photos.filter((p) => !p.placeholder).length, 0), 0)
   const flagged = items.filter((it) => it.flagged).length
   return (
     <div className="statusbar ed-status">

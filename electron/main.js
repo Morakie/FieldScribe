@@ -46,6 +46,21 @@ async function getBranding() {
   return { company, logo: logo ? path.join(dirs().branding, logo) : null, fontsDir: fontsDir() }
 }
 const reportDir = (id) => path.join(dirs().reports, id)
+const fillsDir = () => path.join(dataDir(), 'Fills')
+const fillDir = (name) => path.join(fillsDir(), safeName(String(name)))
+/** Where a merge source keeps its files: a report folder, or a fill folder ("fill:<name>"). */
+const sourceDir = (id) => (String(id).startsWith('fill:') ? fillDir(String(id).slice(5)) : reportDir(id))
+function fillCounts(r) {
+  let items = 0, comments = 0, photos = 0, materials = 0, placeholders = 0
+  for (const s of r.sections || []) for (const inst of s.instances || []) {
+    for (const it of inst.items || []) {
+      if ((it.ratings || []).length || (it.entries || []).length) items++
+      for (const e of it.entries || []) { if (String(e.html || '').replace(/<[^>]+>/g, '').trim()) comments++; photos += (e.photos || []).filter((p) => !p.placeholder).length; placeholders += (e.photos || []).filter((p) => p.placeholder).length }
+    }
+    for (const m of inst.materials || []) if ((m.selected || []).length) materials++
+  }
+  return { sections: (r.sections || []).length, items, comments, photos, materials, placeholders }
+}
 const safeName = (s) => s.replace(/[<>:"/\\|?*]+/g, '-').trim()
 // template names may be stored as a HomeGauge path (C:\...\Larry Template 1.ht5) — use just the name
 const tplName = (s) => safeName(String(s).split(/[\\/]/).pop().replace(/\.(ht5|json)$/i, ''))
@@ -281,7 +296,7 @@ function registerIpc(win) {
   // folder under new names (both reports number photos from i1). A photo that is byte-for-byte the same
   // as one already here is not copied again; it maps to the existing file.
   h('mergeFiles', async (fromId, toId, photos, attachments, dryRun) => {
-    const from = reportDir(fromId), to = reportDir(toId)
+    const from = sourceDir(fromId), to = reportDir(toId)
     await fsp.mkdir(path.join(to, 'originals'), { recursive: true })
     const hash = async (p) => crypto.createHash('sha1').update(await fsp.readFile(p)).digest('hex')
     const existing = new Map()
@@ -292,6 +307,7 @@ function registerIpc(win) {
     const map = {}
     let copied = 0, same = 0, missing = 0
     for (const f of photos || []) {
+      if (!f) continue
       const src = path.join(from, f)
       if (!fs.existsSync(src)) { missing++; continue }
       const hsh = await hash(src)
@@ -318,7 +334,7 @@ function registerIpc(win) {
         map['att:' + f] = name
       }
     }
-    await makeBackup(toId, true) // the report as it was before the merge
+    await makeBackup(toId, true) // the report as it was before the merge / fill
     return { map, copied, same, missing }
   })
 
@@ -375,7 +391,9 @@ function registerIpc(win) {
       const st = await fsp.stat(path.join(dirs().templates, f))
       let sections = 0, comments = 0, source = ''
       try { const T = await readJson(path.join(dirs().templates, f)); sections = T.sections.length; comments = Object.keys(T.comments).length; source = T.source || '' } catch {}
-      out.push({ name: f.slice(0, -5), sections, comments, source, updated: st.mtime.toISOString() })
+      // the HomeGauge category folder it came from (…\HomeGauge\Templates\<folder>\x.ht5)
+      const m = /[\\/]Templates[\\/](.+)[\\/][^\\/]+$/i.exec(source)
+      out.push({ name: f.slice(0, -5), sections, comments, source, folder: m ? m[1].replace(/[\\/]/g, ' / ') : '', updated: st.mtime.toISOString() })
     }
     return out.sort((a, b) => a.name.localeCompare(b.name))
   })
@@ -580,12 +598,121 @@ function registerIpc(win) {
   })
   h('openAttachment', (reportId, file) => shell.openPath(path.join(reportDir(reportId), 'attachments', file)))
   h('compressForUpload', (reportId, maxEdge) => compressPhotos(reportId, maxEdge))
-  // report fills: saved "starting answers"
-  const fillsDir = () => path.join(dirs().root, 'Fills')
-  h('listFills', async () => (await fsp.readdir(fillsDir()).catch(() => [])).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5)))
-  h('loadFill', (name) => readJson(path.join(fillsDir(), safeName(name) + '.json')))
-  h('saveFill', async (name, data) => { await fsp.mkdir(fillsDir(), { recursive: true }); await writeJsonAtomic(path.join(fillsDir(), safeName(name) + '.json'), data) })
-  h('deleteFill', (name) => fsp.unlink(path.join(fillsDir(), safeName(name) + '.json')))
+  // ---------- report fills ----------
+  // A fill is a saved set of starting answers (ratings, comments, photos, S&M) taken from a report.
+  // v2 (current): Fills\<name>\fill.json + the photos it uses. v1 (older): Fills\<name>.json, no photos.
+  h('listFills', async () => {
+    const out = []
+    for (const e of await fsp.readdir(fillsDir(), { withFileTypes: true }).catch(() => [])) {
+      try {
+        if (e.isDirectory()) {
+          const p = path.join(fillsDir(), e.name, 'fill.json')
+          if (!fs.existsSync(p)) continue
+          const f = await readJson(p)
+          out.push({ name: f.name || e.name, date: f.date || '', template: f.template || '', from: f.from || '', source: f.source || '', counts: f.counts || null, version: 2 })
+        } else if (e.name.endsWith('.json')) {
+          const st = await fsp.stat(path.join(fillsDir(), e.name))
+          out.push({ name: e.name.slice(0, -5), date: st.mtime.toISOString(), template: '', from: '', source: '', counts: null, version: 1 })
+        }
+      } catch {}
+    }
+    return out.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
+  })
+  h('loadFill', async (name) => {
+    const d = fillDir(name)
+    if (fs.existsSync(path.join(d, 'fill.json'))) return readJson(path.join(d, 'fill.json'))
+    return readJson(path.join(fillsDir(), safeName(name) + '.json'))
+  })
+  // Save a fill from a report: its answers plus copies of the photos those answers use.
+  h('saveFill', async (name, fromReportId, data) => {
+    name = safeName(name)
+    if (!name) throw new Error('The fill needs a name')
+    const d = fillDir(name)
+    const tmp = d + '.saving'
+    await fsp.rm(tmp, { recursive: true, force: true })
+    await fsp.mkdir(tmp, { recursive: true })
+    for (const f of data.photos || []) {
+      const src = path.join(reportDir(fromReportId), f)
+      if (fs.existsSync(src)) await fsp.copyFile(src, path.join(tmp, f)).catch(() => {})
+    }
+    delete data.photos
+    await writeJsonAtomic(path.join(tmp, 'fill.json'), { ...data, version: 2, name, date: new Date().toISOString() })
+    await fsp.rm(d, { recursive: true, force: true })
+    await fsp.rm(path.join(fillsDir(), name + '.json'), { force: true })
+    await fsp.rename(tmp, d)
+    return name
+  })
+  h('deleteFill', async (name) => {
+    await fsp.rm(fillDir(name), { recursive: true, force: true })
+    await fsp.rm(path.join(fillsDir(), safeName(name) + '.json'), { force: true })
+  })
+  h('renameFill', async (oldName, newName) => {
+    newName = safeName(newName)
+    if (!newName) throw new Error('The fill needs a name')
+    if (fs.existsSync(fillDir(newName)) || fs.existsSync(path.join(fillsDir(), newName + '.json'))) throw new Error(`There is already a fill called "${newName}".`)
+    if (fs.existsSync(fillDir(oldName))) {
+      await fsp.rename(fillDir(oldName), fillDir(newName))
+      const p = path.join(fillDir(newName), 'fill.json')
+      const f = await readJson(p); f.name = newName; await writeJsonAtomic(p, f)
+    } else await fsp.rename(path.join(fillsDir(), safeName(oldName) + '.json'), path.join(fillsDir(), newName + '.json'))
+    return newName
+  })
+  // HomeGauge keeps its report fills in AppData\Local\HomeGauge\AutoFill\<n>\<name>.hf3 (+ photos).
+  // An .hf3 is a report file without the customer/appointment part, so the report importer reads it.
+  h('hgFills', async () => {
+    const hg = settings().hgDir()
+    if (!hg) return []
+    const out = []
+    const root = path.join(hg, 'AutoFill')
+    for (const e of await fsp.readdir(root, { withFileTypes: true }).catch(() => [])) {
+      if (!e.isDirectory()) continue
+      const d = path.join(root, e.name)
+      for (const f of await fsp.readdir(d).catch(() => [])) {
+        if (!/\.hf3$/i.test(f)) continue
+        const st = await fsp.stat(path.join(d, f))
+        out.push({ path: path.join(d, f), name: safeName(f.replace(/\.hf3$/i, '')), updated: st.mtime.toISOString() })
+      }
+    }
+    return out.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
+  })
+  h('importHgFills', async (paths) => {
+    const done = []
+    let n = 0
+    for (const p of paths) {
+      win.webContents.send('progress', `Importing report fill ${++n} of ${paths.length}…`)
+      try {
+        const r = importer.parseReportXml(await fsp.readFile(p, 'utf8'))
+        const src = path.dirname(p)
+        const name = safeName(path.basename(p).replace(/\.hf3$/i, ''))
+        const d = fillDir(name), tmp = d + '.saving'
+        await fsp.rm(tmp, { recursive: true, force: true })
+        await fsp.mkdir(tmp, { recursive: true })
+        // keep only photos that HomeGauge actually stored with the fill
+        let photos = 0, missing = 0
+        for (const s of r.sections) for (const inst of s.instances) for (const it of inst.items) for (const en of it.entries) {
+          en.photos = en.photos.filter((ph) => {
+            if (ph.placeholder) return true
+            const ok = ph.file && fs.existsSync(path.join(src, ph.file))
+            if (!ok) { missing++; return false }
+            return true
+          })
+          for (const ph of en.photos) { if (ph.placeholder) continue; if (!fs.existsSync(path.join(tmp, ph.file))) await fsp.copyFile(path.join(src, ph.file), path.join(tmp, ph.file)); photos++ }
+        }
+        const st = await fsp.stat(p)
+        const fill = {
+          version: 2, name, date: st.mtime.toISOString(), template: r.template.name, from: '', source: p,
+          report: { sections: r.sections, generalInfo: r.generalInfo, template: r.template },
+          counts: fillCounts(r), missingPhotos: missing,
+        }
+        await writeJsonAtomic(path.join(tmp, 'fill.json'), fill)
+        await fsp.rm(d, { recursive: true, force: true })
+        await fsp.rename(tmp, d)
+        done.push({ name, photos, missing })
+      } catch (e) { done.push({ name: path.basename(p), error: String(e?.message || e) }) }
+    }
+    win.webContents.send('progress', '')
+    return done
+  })
   h('deleteContact', async (id) => { const list = await settings().contacts(); const i = list.findIndex((c) => c.id === id); if (i >= 0) { list.splice(i, 1); await fsp.writeFile(path.join(dirs().root, 'contacts.json'), JSON.stringify(list)) } return list })
   const csv = (rows) => rows.map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n')
   async function saveCsv(title, name, rows) {
@@ -788,7 +915,7 @@ function buildMenu(win) {
       item('New Report', 'new', 'CmdOrCtrl+N'), item('Open Report…', 'openList', 'CmdOrCtrl+O'), item('Start Page', 'home'), item('Save Report', 'save', 'CmdOrCtrl+S'), sep,
       item('Merge Report Into This Report…', 'mergeInto'), sep,
       item('Save Template As…', 'saveTemplateAs'), sep,
-      item('Import HomeGauge Reports…', 'importReports'), item('Import HomeGauge Upload (.zip)…', 'importZip'), item('Import HomeGauge Contacts (people4.csv)…', 'importContacts'), item('Import HomeGauge Settings (prices, pay lists, inspector)…', 'importHgSettings'), sep,
+      item('Import HomeGauge Reports…', 'importReports'), item('Import HomeGauge Upload (.zip)…', 'importZip'), item('Import HomeGauge Contacts (people4.csv)…', 'importContacts'), item('Import HomeGauge Settings (prices, pay lists, inspector)…', 'importHgSettings'), item('Import HomeGauge Report Fills…', 'importHgFills'), sep,
       item('Export Report Info && Customers…', 'exportReportInfo'), item('Export Contacts…', 'exportContacts'), sep,
       item('Preview Report', 'preview', 'CmdOrCtrl+P'), soon('Publish Report w/ Preview First…', 'CmdOrCtrl+U'), item('Print To File (PDF)…', 'pdf'), sep,
       { label: 'Open Data Folder', click: () => shell.openPath(dirs().root) }, sep,

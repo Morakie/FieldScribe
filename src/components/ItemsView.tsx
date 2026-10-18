@@ -97,7 +97,7 @@ export default function ItemsView({ section, instance }: { section: Section; ins
           </tr></thead>
           <tbody>
             {instance.items.map((it, i) => {
-              const nPics = it.entries.reduce((n, e) => n + e.photos.length, 0)
+              const nPics = it.entries.reduce((n, e) => n + e.photos.filter((p) => !p.placeholder).length, 0)
               const inSum = it.entries.some((e) => e.summary)
               return (
                 <tr key={it.itemId} className={(i === itemIdx ? 'sel ' : '') + (it.excluded ? 'excluded ' : '') + (dropRow === i ? 'drop' : '')}
@@ -182,7 +182,8 @@ function EntriesPane({ item, itemIdx }: { section: Section; item: ItemAnswer; it
           <button key={e.id} className={'etab' + (i === entryIdx ? ' on' : '')} onClick={() => setEntry(i)}>
             Comment {i + 1}
             {e.summary && <span className="badge-pill sum" title="In the Summary">S</span>}
-            {e.photos.length > 0 && <Badge icon={<CamIcon size={11} />} n={e.photos.length} title={`${e.photos.length} photo(s)`} />}
+            {e.photos.some((p) => !p.placeholder) && <Badge icon={<CamIcon size={11} />} n={e.photos.filter((p) => !p.placeholder).length} title={`${e.photos.filter((p) => !p.placeholder).length} photo(s)`} />}
+            {e.photos.some((p) => p.placeholder) && <span className="badge-pill ph" title={`${e.photos.filter((p) => p.placeholder).length} photo placeholder(s) still to fill`}>☐{e.photos.filter((p) => p.placeholder).length}</span>}
           </button>
         ))}
         <button className="etab add" title="Add a blank comment" onClick={() => { mutate(() => item.entries.push(newEntry())); setEntry(item.entries.length - 1) }}>＋</button>
@@ -219,7 +220,19 @@ function EntriesPane({ item, itemIdx }: { section: Section; item: ItemAnswer; it
           onDragOver={(e) => { e.preventDefault(); setDropping(true) }} onDragLeave={() => setDropping(false)}
           onDrop={(e) => { e.preventDefault(); setDropping(false); const ph = readDrag(e); if (ph) attachPhotos(r, mutate, item, entryIdx, ph) }}>
           {!entry?.photos.length && <div className="drop-hint">Drop photos here</div>}
-          {entry?.photos.map((p, pi) => (
+          {entry?.photos.map((p, pi) => p.placeholder ? (
+            <figure key={'ph' + pi} className="photo placeholder"
+              onDragOver={(e) => { e.preventDefault(); e.stopPropagation() }}
+              onDrop={(e) => { e.preventDefault(); e.stopPropagation(); setDropping(false); const ph = readDrag(e); if (ph) attachPhotos(r, mutate, item, entryIdx, ph, pi) }}
+              title="Photo placeholder — drop a photo here (or anywhere in this area) to fill it">
+              <div className="ph-box"><CamIcon size={28} /><div>Drop photo here</div></div>
+              <input className="caption" value={p.caption} placeholder="Label" onChange={(e) => mutate(() => { p.caption = e.target.value })} />
+              <div className="photo-actions">
+                <span className="muted small grow">Placeholder — not printed</span>
+                <button className="icon danger" onClick={() => mutate(() => entry.photos.splice(pi, 1))} title="Remove this placeholder">✕</button>
+              </div>
+            </figure>
+          ) : (
             <figure key={p.file + pi} className="photo">
               <img src={imgUrl(joinPath(dir, p.file))} onDoubleClick={() => setEditPhoto({ entry: entryIdx, photo: pi })} title="Double-click to edit" />
               <input className="caption" value={p.caption} placeholder="Caption" onChange={(e) => mutate(() => { p.caption = e.target.value })} />

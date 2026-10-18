@@ -354,3 +354,31 @@ table.rl-grid td.c, table.rl-grid th.c { text-align: center }
 .merge-opts h3 { margin: 6px 0 0 } .merge-opts label { display: flex; gap: 6px; align-items: center }
 .merge-total { background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 6px 10px; line-height: 1.7 }
 .merge-warn { color: var(--accent2); font-size: 12px }
+
+/* template folders */
+.tpl-folders { display: flex; flex-direction: column; gap: 2px; max-width: 720px }
+.tpl-folder-head { padding: 6px 8px; cursor: pointer; border-radius: 4px; user-select: none; display: flex; align-items: center; gap: 6px }
+.tpl-folder-head:hover { background: var(--hover) }
+.tpl-folder .caret { width: 12px; color: var(--muted) }
+.tpl-folder-body { padding: 2px 0 6px 26px; display: flex; flex-direction: column; gap: 4px }
+.tpl-hg-row { display: flex; align-items: center; gap: 10px; padding: 3px 8px; border-bottom: 1px solid var(--line2) }
+.tpl-hg-row:hover { background: var(--hover) }
+.tpl-hg-toggle { cursor: pointer; user-select: none }
+.tpl-fill { margin: 10px 0 }
+.tpl-fill select { min-width: 260px; margin-left: 8px }
+
+/* report fills (HomeGauge layout) */
+.fill-list { border: 1px solid var(--line); border-radius: 4px; background: var(--input); display: flex; flex-direction: column; min-height: 260px; max-height: 340px }
+.fill-head { background: var(--th); padding: 5px 10px; text-align: center; font-weight: 600; cursor: pointer; border-bottom: 1px solid var(--line); position: relative; user-select: none }
+.fill-head span { position: absolute; right: 10px; color: var(--muted) }
+.fill-rows { overflow: auto; flex: 1 }
+.fill-row { padding: 4px 10px; border-bottom: 1px solid var(--line2); cursor: default; user-select: none }
+.fill-row:hover { background: var(--hover) } .fill-row.sel { background: var(--sel); color: #fff }
+.fill-info { border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; min-height: 64px; line-height: 1.6; background: var(--bg) }
+.fill-modes { display: flex; flex-direction: column; gap: 4px } .fill-modes label { display: flex; gap: 6px; align-items: center }
+.warn-text { color: var(--accent2) }
+
+/* photo placeholders */
+.photo.placeholder .ph-box { aspect-ratio: 4 / 3; border: 2px dashed var(--btnline); border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: var(--muted); background: var(--bg) }
+.photo.placeholder:hover .ph-box { border-color: var(--accent); color: var(--text) }
+.badge-pill.ph { background: transparent; border: 1px dashed var(--btnline); color: var(--muted) }

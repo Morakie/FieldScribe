@@ -6,7 +6,7 @@ const names = [
   'addPhoto', 'savePhoto', 'originalOf', 'importLibrary', 'addToLibrary', 'openDataFolder', 'printToPdf',
   'branding', 'saveBranding', 'pickLogo', 'getSettings', 'saveSettings', 'contacts', 'saveContact', 'importContacts',
   'openExternal', 'addAttachments', 'openAttachment', 'compressForUpload',
-  'listFills', 'loadFill', 'saveFill', 'deleteFill', 'deleteContact', 'exportContacts', 'exportReportInfo', 'exportComments', 'importCommentsCsv', 'dataSizes', 'photoLocker',
+  'listFills', 'loadFill', 'saveFill', 'deleteFill', 'renameFill', 'hgFills', 'importHgFills', 'deleteContact', 'exportContacts', 'exportReportInfo', 'exportComments', 'importCommentsCsv', 'dataSizes', 'photoLocker',
   'copyReport', 'createReinspection', 'mergeFiles', 'listBackups', 'restoreBackup', 'openReportFolder',
   'newDraft', 'createFromDraft', 'templateInfo', 'hgTemplates', 'importTemplateFiles', 'importHgSettings',
 ]

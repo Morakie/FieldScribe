@@ -22,7 +22,8 @@ export interface TemplateSection {
 }
 export interface TemplateFile extends TemplateLib { sections: TemplateSection[] }
 
-export interface Photo { file: string; caption: string; src?: string; size?: 's' | 'm' | 'l' | 'xl'; edit?: unknown }
+/** placeholder = an empty, labeled photo slot (from a HomeGauge fill/template) waiting for a real photo; file is '' */
+export interface Photo { file: string; caption: string; src?: string; size?: 's' | 'm' | 'l' | 'xl'; edit?: unknown; placeholder?: boolean }
 export interface Entry { id: string; html: string; summary: boolean; photos: Photo[] }
 export interface ItemAnswer { itemId: string; ratings: string[]; excluded: boolean; entries: Entry[]; flagged?: boolean; originalRatings?: string[] }
 export interface MaterialAnswer { materialId: string; selected: string[]; extraInfo: string; excluded?: boolean }
@@ -71,6 +72,10 @@ export interface ReportRow {
   details: { clientName: string; company: string; start: string; end: string; inspAddress: string; billing: string
     workPhone: string; homePhone: string; mobile: string; email: string; mls: string; reps: string[]; reinspectionOf: string }
 }
+export interface FillInfo {
+  name: string; date: string; template: string; from: string; source: string; version: 1 | 2
+  counts: { sections: number; items: number; comments: number; photos: number; materials: number } | null
+}
 export interface BackupInfo { file: string; time: string; size: number }
 
 export interface Dirs { root: string; templates: string; reports: string; library: string }
@@ -88,7 +93,7 @@ export interface Api {
   openReportFolder(id: string): Promise<string>
   newDraft(): Promise<Report>
   createFromDraft(template: string, draft: Report): Promise<string>
-  templateInfo(): Promise<{ name: string; sections: number; comments: number; source: string; updated: string }[]>
+  templateInfo(): Promise<{ name: string; sections: number; comments: number; source: string; folder: string; updated: string }[]>
   hgTemplates(): Promise<{ path: string; name: string; folder: string; updated: string; size: number }[]>
   importTemplateFiles(paths: string[]): Promise<string[]>
   importHgSettings(): Promise<null | { services: number; payMethods: number; payStatus: number; payNotes: number; inspector: string }>
@@ -123,10 +128,13 @@ export interface Api {
   addAttachments(reportId: string): Promise<Attachment[]>
   openAttachment(reportId: string, file: string): Promise<void>
   compressForUpload(reportId: string, maxEdge: number): Promise<{ changed: number; before: number; after: number }>
-  listFills(): Promise<string[]>
+  listFills(): Promise<FillInfo[]>
   loadFill(name: string): Promise<any>
-  saveFill(name: string, data: any): Promise<void>
+  saveFill(name: string, fromReportId: string, data: any): Promise<string>
   deleteFill(name: string): Promise<void>
+  renameFill(oldName: string, newName: string): Promise<string>
+  hgFills(): Promise<{ path: string; name: string; updated: string }[]>
+  importHgFills(paths: string[]): Promise<{ name: string; photos?: number; missing?: number; error?: string }[]>
   deleteContact(id: string): Promise<Contact[]>
   exportContacts(): Promise<string | null>
   exportReportInfo(): Promise<string | null>

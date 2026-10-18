@@ -23,6 +23,8 @@ export interface MergeOptions {
   inspection: boolean
   cover: boolean
   attachments: boolean
+  /** add = combine with what's there (default); blanks = only fill items/S&M that are empty; replace = the other report's answers win */
+  mode?: 'add' | 'blanks' | 'replace'
 }
 
 export interface ItemPlan {
@@ -81,6 +83,7 @@ interface Ctx {
   itemRemap: Record<string, string>; matRemap: Record<string, string>
   warnings: string[]
   used: Set<string>
+  mode: 'add' | 'blanks' | 'replace'
 }
 
 /** Make sure the target template knows an item the source uses; returns the id to use in the target. */
@@ -126,11 +129,18 @@ function findMat(c: Ctx, ids: string[], srcId: string): string | null {
   return ids.find((id) => norm(matNameOf(c.T, id)) === name) || null
 }
 
-const mapPhotos = (c: Ctx, photos: Photo[]) => (photos || []).map((p) => { c.used.add(p.file); return { ...clone(p), file: c.map(p.file) } })
+const mapPhotos = (c: Ctx, photos: Photo[]) => (photos || []).map((p) => {
+  if (p.placeholder || !p.file) return { ...clone(p), file: '' }
+  c.used.add(p.file); return { ...clone(p), file: c.map(p.file) }
+})
+/** placeholders have no file, so they are told apart by their label */
+const pkey = (p: Photo) => (p.placeholder || !p.file ? 'ph:' + (p.caption || '').toLowerCase() : p.file)
 
 /** Merge one source item answer into one target item answer. */
 function mergeItem(c: Ctx, t: ItemAnswer, s: ItemAnswer, title: string, isNew: boolean): ItemPlan {
   const plan: ItemPlan = { title, newItem: isNew, ratings: [], ratingConflict: false, comments: 0, dupComments: 0, photos: 0, summary: 0, unexclude: false }
+  if (c.mode === 'blanks' && itemHasContent(t)) return plan
+  if (c.mode === 'replace' && itemHasContent(s)) { t.ratings = []; t.entries = []; t.flagged = false }
   if (t.excluded) { t.excluded = false; plan.unexclude = true }
   const tr = t.ratings || (t.ratings = [])
   const add = (s.ratings || []).filter((x) => !tr.includes(x))
@@ -146,16 +156,16 @@ function mergeItem(c: Ctx, t: ItemAnswer, s: ItemAnswer, title: string, isNew: b
     const photos = mapPhotos(c, se.photos)
     if (same) {
       plan.dupComments++
-      const have = new Set(same.photos.map((p) => p.file))
-      for (const p of photos) if (!have.has(p.file)) { same.photos.push(p); have.add(p.file); plan.photos++ }
+      const have = new Set(same.photos.map(pkey))
+      for (const p of photos) if (!have.has(pkey(p))) { same.photos.push(p); have.add(pkey(p)); if (!p.placeholder) plan.photos++ }
       if (se.summary && !same.summary) { same.summary = true; plan.summary++ }
     } else {
       // a photo-only entry whose photos are all already in this item adds nothing
-      const inItem = new Set(t.entries.flatMap((e) => e.photos.map((p) => p.file)))
-      if (!k && photos.every((p) => inItem.has(p.file))) continue
+      const inItem = new Set(t.entries.flatMap((e) => e.photos.map(pkey)))
+      if (!k && photos.every((p) => inItem.has(pkey(p)))) continue
       t.entries.push({ id: newId(), html: se.html, summary: !!se.summary, photos })
       if (k) plan.comments++
-      plan.photos += photos.length
+      plan.photos += photos.filter((p) => !p.placeholder).length
       if (se.summary) plan.summary++
     }
   }
@@ -179,6 +189,8 @@ function mergeMats(c: Ctx, targetIds: string[], tAns: MaterialAnswer[], sAns: Ma
     }
     let tm = tAns.find((m) => m.materialId === tid)
     if (!tm) { tm = emptyMat(tid); tAns.push(tm) }
+    if (c.mode === 'blanks' && matHasContent(tm)) continue
+    if (c.mode === 'replace') { tm.selected = []; tm.extraInfo = '' }
     const added = (sm.selected || []).filter((x) => !(tm!.selected || []).includes(x))
     tm.selected = [...(tm.selected || []), ...added]
     let extra = false
@@ -266,7 +278,7 @@ function addSection(c: Ctx, ss: Section, opts: MergeOptions): Section {
 export function mergeReports(target: Report, source: Report, opts: MergeOptions, photoMap?: Record<string, string>): { result: Report; plan: MergePlan } {
   const T = clone(target), S = source
   // in a preview, source photos get a prefix so they never look like the target's own files (both start at i1.jpg)
-  const c: Ctx = { T, S, map: (f) => (photoMap ? photoMap[f] ?? f : 'src:' + f), itemRemap: {}, matRemap: {}, warnings: [], used: new Set() }
+  const c: Ctx = { T, S, map: (f) => (photoMap ? photoMap[f] ?? f : 'src:' + f), itemRemap: {}, matRemap: {}, warnings: [], used: new Set(), mode: opts.mode || 'add' }
   const plan: MergePlan = { sections: [], emptySections: 0, generalInfo: { replace: false, materials: 0 }, photosToCopy: [], attachmentsToCopy: [], cover: null, warnings: c.warnings }
 
   for (const ss of S.sections) {

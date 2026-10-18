@@ -37,20 +37,20 @@ export function buildReportHtml(r: Report, dir: string, brand: Branding, opts: B
   const pic = (f: string, m = 1100) => imgUrl(joinPath(dir, f)) + `&m=${m}`
   const sections = r.sections.filter((s) => !s.excluded)
   const allEntries = sections.flatMap((s) => s.instances.flatMap((i) => i.items.filter((it) => !it.excluded).flatMap((it) => it.entries)))
-  const coverFile = (r as any).coverPhoto || allEntries.flatMap((e) => e.photos)[0]?.file
+  const coverFile = (r as any).coverPhoto || allEntries.flatMap((e) => e.photos).find((p) => !p.placeholder && p.file)?.file
   const fmtDate = (d: string) => (d ? new Date(d + 'T12:00').toLocaleDateString('en-US') : '')
   const cols = T.ratingColumns
   const pg = (id: string) => (opts.forPdf ? `{{PG:${id}}}` : '')
   const mark = (id: string) => (opts.forPdf ? `<span class="mk">QQ${id}QQ</span>` : '')
   const fontUrl = (f: string) => imgUrl(joinPath(brand.fontsDir, f))
 
-  const photos = (ps: { file: string; caption: string; size?: string }[]) => ps.length
+  const photos = (all: { file: string; caption: string; size?: string; placeholder?: boolean }[], ps = all.filter((p) => !p.placeholder && p.file)) => ps.length
     ? `<div class="pics">${ps.map((p) => `<figure class="sz-${p.size || 'm'}"><a href="${pic(p.file)}" target="_blank"><img src="${pic(p.file)}"/></a><figcaption>${esc(p.caption || '')}</figcaption></figure>`).join('')}</div>` : ''
 
   // ---------- counts ----------
   const itemsInspected = sections.reduce((n, s) => n + s.instances.reduce((m, i) => m + i.items.filter((it) => !it.excluded && it.ratings.length && !it.ratings.every((x) => cols.find((c) => c.short === x)?.isExclude)).length, 0), 0)
   const summaryCount = allEntries.filter((e) => e.summary).length
-  const photoCount = allEntries.reduce((n, e) => n + e.photos.length, 0)
+  const photoCount = allEntries.reduce((n, e) => n + e.photos.filter((p) => !p.placeholder && p.file).length, 0)
 
   // ---------- sections ----------
   const toc: { id: string; label: string }[] = []

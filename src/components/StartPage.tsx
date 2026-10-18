@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Report, Settings, ReportRow } from '../types'
+import type { Report, Settings, ReportRow, FillInfo } from '../types'
+import type { FillMode } from '../fills'
 import { api, debounce } from '../util'
 import { EditorCtx, TreeLink, type Ctx, type Sel } from './Editor'
 import ReportInfoView, { CustomerView } from './InfoView'
@@ -42,9 +43,10 @@ export default function StartPage({ onOpen, onOpenList, startPane }: { onOpen: (
   const c = r.clients[0] || { first: '', last: '' }
   const started = !!(c.first || c.last || r.inspection.address || r.people.length || r.services.some((s) => s.selected))
 
-  async function start(template: string) {
+  async function start(template: string, fill: { name: string; mode: FillMode } | null) {
     const id = await api.createFromDraft(template, ref.current!)
     try { localStorage.removeItem(DRAFT_KEY) } catch {}
+    if (fill) try { sessionStorage.setItem('pendingFill:' + id, JSON.stringify(fill)) } catch {}
     onOpen(id)
   }
 
@@ -110,60 +112,113 @@ function Home({ onOpen, onOpenList, onNew }: { onOpen: (id: string) => void; onO
   )
 }
 
-function TemplatePicker({ onStart }: { onStart: (t: string) => void }) {
+/** Group rows by folder into collapsible sections (like HomeGauge's template categories). */
+function Folders<T>({ rows, folderOf, open, setOpen, render, emptyLabel = 'Other' }: {
+  rows: T[]; folderOf: (x: T) => string; open: Record<string, boolean>; setOpen: (o: Record<string, boolean>) => void
+  render: (x: T) => React.ReactNode; emptyLabel?: string
+}) {
+  const groups = new Map<string, T[]>()
+  for (const x of rows) { const f = folderOf(x) || emptyLabel; if (!groups.has(f)) groups.set(f, []); groups.get(f)!.push(x) }
+  const names = [...groups.keys()].sort((a, b) => (a === emptyLabel ? 1 : b === emptyLabel ? -1 : a.localeCompare(b)))
+  return <div className="tpl-folders">{names.map((f) => (
+    <div key={f} className={'tpl-folder' + (open[f] ? ' open' : '')}>
+      <div className="tpl-folder-head" onClick={() => setOpen({ ...open, [f]: !open[f] })}>
+        <span className="caret">{open[f] ? '▾' : '▸'}</span> <span className="folder-ico">📁</span> <b>{f}</b> <span className="muted small">({groups.get(f)!.length})</span>
+      </div>
+      {open[f] && <div className="tpl-folder-body">{groups.get(f)!.map(render)}</div>}
+    </div>
+  ))}</div>
+}
+
+function TemplatePicker({ onStart }: { onStart: (t: string, fill: { name: string; mode: FillMode } | null) => void }) {
   type Mine = Awaited<ReturnType<typeof api.templateInfo>>[number]
   type Hg = Awaited<ReturnType<typeof api.hgTemplates>>[number]
+  const defaults = () => { try { return JSON.parse(localStorage.getItem('newReportDefaults') || '{}') } catch { return {} } }
   const [mine, setMine] = useState<Mine[] | null>(null)
   const [hg, setHg] = useState<Hg[]>([])
-  const [pick, setPick] = useState<string>(() => { try { return JSON.parse(localStorage.getItem('newReportDefaults') || '{}').template || '' } catch { return '' } })
+  const [fills, setFills] = useState<FillInfo[]>([])
+  const [fill, setFill] = useState<string>('')
+  const [pick, setPick] = useState<string>(() => defaults().template || '')
   const [busy, setBusy] = useState('')
+  const [q, setQ] = useState('')
+  const [openMine, setOpenMine] = useState<Record<string, boolean>>({})
+  const [openHg, setOpenHg] = useState<Record<string, boolean>>({})
+  const [showHg, setShowHg] = useState(false)
   const load = async () => {
-    const [m, h] = await Promise.all([api.templateInfo(), api.hgTemplates()])
-    setMine(m); setHg(h)
-    setPick((p) => (m.some((x) => x.name === p) ? p : m[0]?.name || ''))
+    const [m, h, f] = await Promise.all([api.templateInfo(), api.hgTemplates(), api.listFills()])
+    setMine(m); setHg(h); setFills(f)
+    const p = m.some((x) => x.name === pick) ? pick : m[0]?.name || ''
+    setPick(p)
+    // open the folder holding the selected template
+    const cur = m.find((x) => x.name === p)
+    if (cur) setOpenMine((o) => ({ ...o, [cur.folder || h.find((x) => x.name.toLowerCase() === cur.name.toLowerCase())?.folder || 'My Templates']: true }))
   }
   useEffect(() => { load() }, [])
   const have = new Set((mine || []).map((m) => m.name.toLowerCase()))
+  // a Bridge template sits in the same folder as the HomeGauge template it came from
+  const mineFolder = (t: Mine) => t.folder || hg.find((h) => h.name.toLowerCase() === t.name.toLowerCase())?.folder || ''
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean)
+  const match = (s: string) => words.every((w) => s.toLowerCase().includes(w))
+  const mineShown = (mine || []).filter((t) => match(`${t.name} ${mineFolder(t)}`))
+  const hgShown = hg.filter((t) => match(`${t.name} ${t.folder}`))
+  // while searching, every folder with a hit is open
+  const openM = words.length ? Object.fromEntries(mineShown.map((t) => [mineFolder(t) || 'My Templates', true])) : openMine
+  const openH = words.length ? Object.fromEntries(hgShown.map((t) => [t.folder || 'Templates', true])) : openHg
+  const tplKey = (s: string) => String(s || '').split(/[\\/]/).pop()!.replace(/\.ht5$/i, '').toLowerCase().trim()
+  const fillsSorted = [...fills].sort((a, b) => Number(tplKey(b.template) === tplKey(pick)) - Number(tplKey(a.template) === tplKey(pick)) || a.name.localeCompare(b.name))
   async function importHg(paths: string[]) {
     setBusy('Importing… large templates take a few seconds.')
     try { const names = await api.importTemplateFiles(paths); await load(); if (names[0]) setPick(names[0]) } finally { setBusy('') }
   }
   async function go() {
     if (!pick) return
-    try { localStorage.setItem('newReportDefaults', JSON.stringify({ ...JSON.parse(localStorage.getItem('newReportDefaults') || '{}'), template: pick })) } catch {}
-    setBusy('Starting the report…'); onStart(pick)
+    try { localStorage.setItem('newReportDefaults', JSON.stringify({ ...defaults(), template: pick })) } catch {}
+    setBusy('Starting the report…')
+    onStart(pick, fill ? { name: fill, mode: 'add' } : null)
   }
+  const newCount = hg.filter((t) => !have.has(t.name.toLowerCase())).length
   return (
     <div className="pad tpl-pick">
       <h3>Select Report Template</h3>
       {mine === null ? <div className="muted">Loading…</div> : <>
-        <div className="tpl-list">
-          {mine.map((t) => (
-            <label key={t.name} className={'tpl-row' + (pick === t.name ? ' on' : '')} onDoubleClick={go}>
-              <input type="radio" name="tpl" checked={pick === t.name} onChange={() => setPick(t.name)} />
-              <div><b>{t.name}</b><div className="muted small">{t.sections} sections · {t.comments.toLocaleString()} comments · updated {new Date(t.updated).toLocaleDateString()}</div></div>
-            </label>
-          ))}
-          {!mine.length && <div className="muted">No templates yet. Import one from HomeGauge below.</div>}
+        <input className="search" placeholder="Search templates…" value={q} onChange={(e) => setQ(e.target.value)} style={{ marginBottom: 8 }} />
+        <Folders rows={mineShown} folderOf={mineFolder} open={openM} setOpen={setOpenMine} emptyLabel="My Templates" render={(t) => (
+          <label key={t.name} className={'tpl-row' + (pick === t.name ? ' on' : '')} onDoubleClick={go}>
+            <input type="radio" name="tpl" checked={pick === t.name} onChange={() => setPick(t.name)} />
+            <div><b>{t.name}</b><div className="muted small">{t.sections} sections · {t.comments.toLocaleString()} comments · updated {new Date(t.updated).toLocaleDateString()}</div></div>
+          </label>
+        )} />
+        {!mine.length && <div className="muted">No templates yet. Import one from HomeGauge below.</div>}
+        {mine.length > 0 && !mineShown.length && <div className="muted">No templates match “{q}”.</div>}
+        <div className="row tpl-fill">
+          <label className="row">Report Fill
+            <select value={fill} onChange={(e) => setFill(e.target.value)}>
+              <option value="">(none)</option>
+              {fillsSorted.map((f) => <option key={f.name} value={f.name}>{f.name}{f.template && tplKey(f.template) !== tplKey(pick) ? `  — ${f.template}` : ''}</option>)}
+            </select>
+          </label>
+          <span className="muted small">Optional: starting answers stamped on the new report.</span>
         </div>
         <div className="row"><button className="primary big" disabled={!pick || !!busy} onClick={go}>Start Report With “{pick || '…'}”</button>
           <button onClick={async () => { const n = await api.importTemplate(); if (n.length) { await load(); setPick(n[0]) } }}>Import .ht5 file…</button></div>
         {busy && <div className="notice" style={{ marginTop: 10 }}>{busy}</div>}
         {hg.length > 0 && <>
-          <h4 style={{ marginTop: 24 }}>HomeGauge templates on this PC</h4>
-          <p className="muted small">Importing copies the template's sections, items, comments and Smart Text into Bridge Report. Re-importing one you already have replaces it (edits you made in Bridge Report to that template would be lost).</p>
-          <table className="grid narrow">
-            <thead><tr><th>Template</th><th>Folder</th><th>Last changed</th><th /></tr></thead>
-            <tbody>{hg.map((t) => (
-              <tr key={t.path}>
-                <td>{t.name}</td><td className="muted">{t.folder || '—'}</td><td>{new Date(t.updated).toLocaleDateString()}</td>
-                <td>{have.has(t.name.toLowerCase())
+          <h4 className="tpl-hg-toggle" style={{ marginTop: 24 }} onClick={() => setShowHg(!showHg)}>
+            {showHg || words.length ? '▾' : '▸'} HomeGauge templates on this PC <span className="muted small">({hg.length}{newCount ? `, ${newCount} not imported` : ''})</span>
+          </h4>
+          {(showHg || words.length > 0) && <>
+            <p className="muted small">Importing copies the template's sections, items, comments and Smart Text into Bridge Report. Re-importing one you already have replaces it (edits you made in Bridge Report to that template would be lost).</p>
+            <Folders rows={hgShown} folderOf={(t) => t.folder} open={openH} setOpen={setOpenHg} emptyLabel="Templates" render={(t) => (
+              <div key={t.path} className="tpl-hg-row">
+                <span className="grow">{t.name}</span>
+                <span className="muted small">{new Date(t.updated).toLocaleDateString()}</span>
+                {have.has(t.name.toLowerCase())
                   ? <button disabled={!!busy} onClick={() => confirm(`Re-import "${t.name}" from HomeGauge? This replaces the Bridge Report copy.`) && importHg([t.path])}>Re-import</button>
-                  : <button className="primary" disabled={!!busy} onClick={() => importHg([t.path])}>Import</button>}</td>
-              </tr>))}
-            </tbody>
-          </table>
-          {hg.some((t) => !have.has(t.name.toLowerCase())) && <button style={{ marginTop: 8 }} disabled={!!busy} onClick={() => importHg(hg.filter((t) => !have.has(t.name.toLowerCase())).map((t) => t.path))}>Import all new ({hg.filter((t) => !have.has(t.name.toLowerCase())).length})</button>}
+                  : <button className="primary" disabled={!!busy} onClick={() => importHg([t.path])}>Import</button>}
+              </div>
+            )} />
+            {newCount > 0 && <button style={{ marginTop: 8 }} disabled={!!busy} onClick={() => confirm(`Import all ${newCount} HomeGauge templates you don't have yet?`) && importHg(hg.filter((t) => !have.has(t.name.toLowerCase())).map((t) => t.path))}>Import all new ({newCount})</button>}
+          </>}
         </>}
       </>}
     </div>

@@ -221,7 +221,10 @@ function parseReportXml(xml) {
           entries: kids(ai, 'SecAII').map((e) => ({
             id: uid(), html: unescapeHtml(t(e, 'SecAITxt')),
             summary: kids(e, 'SecAISum').length > 0,
-            photos: kids(e, 'SecAIPic').map((p) => ({ file: text(p), caption: (p.getAttribute('label') || '').trim() })),
+            // HomeGauge photo placeholders (labeled empty slots) are stored as "placeholder.jpg"
+            photos: kids(e, 'SecAIPic').map((p) => /^placeholder\.(jpe?g|png)$/i.test(text(p).trim())
+              ? { file: '', caption: (p.getAttribute('label') || '').trim(), placeholder: true }
+              : { file: text(p), caption: (p.getAttribute('label') || '').trim() }),
           })).filter((e) => htmlToText(e.html) || e.photos.length),
         })
       })

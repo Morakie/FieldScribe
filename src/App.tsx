@@ -7,6 +7,7 @@ import CompanySettings from './components/CompanySettings'
 import PhotoSettingsModal from './components/PhotoSettings'
 import InspectorProfile from './components/InspectorProfile'
 import ContactsManager from './components/ContactsManager'
+import { HgFillsImport } from './components/FillsModal'
 
 const HOME_CMDS = ['importReports', 'importZip', 'importTemplate']
 type Mode = { page: 'start'; pane?: 'customer' } | { page: 'list' }
@@ -27,6 +28,7 @@ export default function App() {
   const [photoSet, setPhotoSet] = useState(false)
   const [inspector, setInspector] = useState(false)
   const [contacts, setContacts] = useState(false)
+  const [hgFills, setHgFills] = useState(false)
   useEffect(() => api.onMenu((cmd) => {
     if (cmd === 'companySettings') return setSettings(true)
     if (cmd === 'themeDark' || cmd === 'themeLight') {
@@ -39,6 +41,7 @@ export default function App() {
     if (cmd === 'importContacts') { api.importContacts().then((n) => n && alert(`Added ${n} new contact(s).`)); return }
     if (cmd === 'inspectorProfile') return setInspector(true)
     if (cmd === 'contacts') return setContacts(true)
+    if (cmd === 'importHgFills') return setHgFills(true)
     if (cmd === 'exportContacts') { api.exportContacts(); return }
     if (cmd === 'exportReportInfo') { api.exportReportInfo(); return }
     if (cmd === 'mergeInto' && !openId) return alert('Open the report you want to merge INTO first (for example the office\'s prefilled report), then choose File → Merge Report Into This Report.')
@@ -68,5 +71,6 @@ export default function App() {
     {photoSet && <PhotoSettingsModal onClose={() => setPhotoSet(false)} />}
     {inspector && <InspectorProfile onClose={() => setInspector(false)} />}
     {contacts && <ContactsManager onClose={() => setContacts(false)} />}
+    {hgFills && <HgFillsImport have={[]} onClose={() => setHgFills(false)} />}
   </>
 }
