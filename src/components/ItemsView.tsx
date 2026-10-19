@@ -309,11 +309,11 @@ function EntriesPane({ item, itemIdx }: { section: Section; item: ItemAnswer; it
           {!entry?.photos.length && <div className="drop-hint">Drop photos here<div className="muted small">Right-click to insert a place holder or sketch</div></div>}
           {entry?.photos.map((p, pi) => p.placeholder ? (
             <figure key={'ph' + pi} className="photo placeholder" onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY, pi }) }}
-              onDoubleClick={() => fillFromFile(pi)}
+              onDoubleClick={() => { setMenu(null); fillFromFile(pi) }}
               onDragOver={(e) => { e.preventDefault(); e.stopPropagation() }}
               onDrop={(e) => { e.preventDefault(); e.stopPropagation(); setDropping(false); const ph = readDrag(e); if (ph) attachPhotos(r, mutate, item, entryIdx, ph, pi) }}
-              title="Photo place holder — drop a photo here, or double-click to choose one. Right-click for more.">
-              <div className="ph-box"><CamIcon size={28} /><div>Drop photo here</div></div>
+              title="Photo place holder — drop a photo here, double-click to choose one, click for more options">
+              <div className="ph-box" onClick={(e) => setMenu({ x: e.clientX, y: e.clientY, pi })}><CamIcon size={28} /><div>Drop photo here</div></div>
               <input className="caption" value={p.caption} placeholder="Label" onChange={(e) => mutate(() => { p.caption = e.target.value })} />
               <div className="photo-actions">
                 <span className="muted small grow">Placeholder — not printed</span>
@@ -322,7 +322,7 @@ function EntriesPane({ item, itemIdx }: { section: Section; item: ItemAnswer; it
             </figure>
           ) : (
             <figure key={p.file + pi} className="photo" onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY, pi }) }}>
-              <img src={imgUrl(joinPath(dir, p.file))} onDoubleClick={() => setEditPhoto({ entry: entryIdx, photo: pi })} title="Double-click to edit" />
+              <img src={imgUrl(joinPath(dir, p.file))} onClick={(e) => setMenu({ x: e.clientX, y: e.clientY, pi })} onDoubleClick={() => { setMenu(null); setEditPhoto({ entry: entryIdx, photo: pi }) }} title="Click for options, double-click to edit" />
               <input className="caption" value={p.caption} placeholder="Caption" onChange={(e) => mutate(() => { p.caption = e.target.value })} />
               <div className="photo-actions">
                 <button className="icon" disabled={pi === 0} onClick={() => mutate(() => { const a = entry.photos; [a[pi - 1], a[pi]] = [a[pi], a[pi - 1]] })} title="Move left">◀</button>

@@ -12,11 +12,17 @@ export default function PhotoPanel() {
   const [imgs, setImgs] = useState<Img[]>([])
   const [lib, setLib] = useState<Img[]>([])
   const [libDir, setLibDir] = useState('')
-  const [sub, setSub] = useState(false)
-  const [hideUsed, setHideUsed] = useState(false)
+  const remembered = (k: string) => { try { return localStorage.getItem(k) === '1' } catch { return false } }
+  const remember = (k: string, v: boolean) => { try { localStorage.setItem(k, v ? '1' : '0') } catch {} }
+  const [sub, setSubState] = useState(() => remembered('photoSubfolders'))
+  const [hideUsed, setHideUsedState] = useState(() => remembered('photoHideUsed'))
+  const setSub = (v: boolean) => { setSubState(v); remember('photoSubfolders', v) }
+  const setHideUsed = (v: boolean) => { setHideUsedState(v); remember('photoHideUsed', v) }
   const [picked, setPicked] = useState<string[]>([])
   const [busy, setBusy] = useState('')
-  const [size, setSize] = useState(150)
+  // thumbnail size, Subfolders and Hide used are remembered between reports and launches
+  const [size, setSizeState] = useState(() => { try { return Number(localStorage.getItem('thumbSize')) || 150 } catch { return 150 } })
+  const setSize = (v: number) => { setSizeState(v); try { localStorage.setItem('thumbSize', String(v)) } catch {} }
 
   const used = useMemo(() => usedSources(r), [r, version])
   const refresh = async () => { if (r.photoFolder) setImgs(await api.listImages(r.photoFolder, sub)) }
